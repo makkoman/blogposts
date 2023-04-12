@@ -52,27 +52,25 @@ Para ver la información de rastreo en AWS X-Ray, necesitas una cuenta de AWS y 
 
 #### IAM Role
 
-To enable your application to send traces to X-Ray, you need to provide the X-Ray daemon with a role. To create the role, go to the "Roles" section in the AWS Web Console for the IAM service and click on the "Create Role" button.
+Para permitir que t u aplicación mande información sobre tus requests a X-Ray, tienes que proveerle al daemon de X-Ray un rol. Para crear un rol, vamos a entrar a nuestra consola web de AWS y de allí navegamos a la página principal de IAM y allí encontraremos el botón "Create Role" (o crear rol si tienes configurado tu panel de AWS en español).
 
+![Crear nuevo rol](images/create-role.png)
 
+En el asistente, selecciona "AWS Account" para Trusted Entity y da click en "Next"/"Siguiente". En la siguiente pantalla, busca por la política de permisos llamada "AWSXRayDaemonWriteAccess". Da click en "Next"/"Siguiente" para continuar..
 
-![Create a new role](images/create-role.png)
+![Nombra, Revisa y Crea](images/name-review-create.png)
 
-In the wizard, select "AWS Account" for Trusted Entity and click "Next". On the next screen, search for the permissions policy named "AWSXRayDaemonWriteAccess". Click "Next" to proceed.
+Agrega un nombre y descripción para el rol, y después da click en "Create Role". Ésto te llevará a la lista de roles. Busca el rol que acabas de crear para ver y copiar su ARN.
 
-![Name, review, and create](images/name-review-create.png)
-
-Add a name and description for the role, and then click "Create Role". This will take you back to the roles list. Look for the role you just created to view and copy the role ARN.
-
-![Role details](images/role-details.png)
+![Detalles del rol](images/role-details.png)
 
 ### X-Ray Daemon
 
-Now that we've created the daemon role, let's configure and run it.
+Ahora que ya tenemos el rol para el daemon, vamos a configurarlo.
 
-For my local setup, I only needed to change a few settings, such as the log level, setting the local mode to true, and adding the X-Ray role and the AWS region.
+Para mi proyecto de prueba, solo tuve que cambiar algunos valores de la configuración, como el nivel del logger, especificar el modo local a verdadero, y agregar el ARN del rol que creamos y la región de AWS en la que estamos operando nuestros servicios.
 
-Here's the config file I used:
+Aquí está la configuración que usé:
 
 ```yaml
 # Send segments to AWS X-Ray service in a specific region
@@ -93,30 +91,30 @@ RoleARN: "arn:aws:iam::269174633178:role/X-Ray_Daemon_role"
 Version: 2
 ```
 
-You can learn more about other config values in the [AWS X-Ray Developer Guide.](https://docs.aws.amazon.com/xray/latest/devguide/xray-daemon-configuration.html)
+En [la guía del desarrollador de AWS X-Ray](https://docs.aws.amazon.com/xray/latest/devguide/xray-daemon-configuration.html) puedes aprender más sobre otros valores que puedes configurar.
 
-### Instrumenting your Go microservice.
+### Instrumentando tu microservicio en Go
 
-Now that we have the X-Ray daemon configured and running, we can add instrumentation to our service.
+Ahora que ya tenemos el X-Ray daemin configurado y corriendo, podemos proceder a instrumentar nuestro servicio.
 
-AWS recommends to start by tracing incoming requests by wrapping the service handlers with `xray.Handler`. However, since we are using Gin, the approach we'll implement is slightly different.
+AWS recomienda empezar agregando rastreo para requests entrantes envolviendo los controladores de servicio con `xray.Handler`. Pero, como estamos usando Gin, el enfoque que implementaremos es ligeramente diferente.
 
-While looking for resources about how to instrument a gin application, I found this [middleware by Oroshnivskyy](https://github.com/oroshnivskyy/go-gin-aws-x-ray) which is based in the [x-ray handler function](https://github.com/aws/aws-xray-sdk-go/blob/1e154184282bb3b0166cb1b154f2b4abed0b1e6f/xray/handler.go#L99).
+Mientras buscaba recursos sobre cómo instrumentar una aplicación con Gin, me encontré con éste [middleware](https://github.com/oroshnivskyy/go-gin-aws-x-ray), el cual está basado en la función [`xray.Handler`](https://github.com/aws/aws-xray-sdk-go/blob/1e154184282bb3b0166cb1b154f2b4abed0b1e6f/xray/handler.go#L99).
 
-This middleware will start and close a segment for every request received. It also, will take care of handling the trace ID header (`"x-amzn-trace-id"`), which is a header that contains an ID value that will be generated for each new request and will be propagated across all of our microservices.
+Éste middleware hace el mismo trabajo que `xray.Handler`, abrirá y cerrará un segmento para cada request recibido. También se encargará de manejar el header para IDs de rastreo (`"x-amzn-trace-id"`), que es un header que contiene un identificador que será generado para cada petición nueva y ue será propagado a travéz de todos nuestros microservicios.
 
-So let's add the middleware to the routes we want to instrument:
+Así que vamos a agregar el middleware a las rutas que queremos intrumentar:
 
 ```go
 // as part of my gin routes
 v1.GET("/auth/roles", xraymid.Middleware(xray.NewFixedSegmentNamer("GetRoles")), controller.GetRoles)
 ```
 
-Here, we are adding the (aliased as xraymid) x-ray gin middleware to a route of the group `v1`. The value passed as argument to `NewFixedSegmentNamer` must be set to a descriptive name for your route. This will be the name of the main trace group for this endpoint.
+Aquí estamos agregando el middleware de X-Ray (con el alias `xraymid`) a una ruta del grupo `v1`. El valor que estamos pasando como argumento a `NewFixedSegmentNamer` debe de ser un nombre descriptivo para tu ruta. Éste será el nombre para el grupo principal de rastreo para éste endpoint.
 
-Alright! now let's see if it works! Start the service and verify the Daemon is running.
+¡Bien! ¡Ahora veamos si funciona! Inicia tu servicio y verifica que el daemon esté corriendo.
 
-After making a request, we can see the in the daemon logs something like:
+Después de hacer un request, podemos ver en los logs del daemon algo como:
 ```
 2023-03-21T13:10:47-06:00 [Debug] Received request on HTTP Proxy server : /GetSamplingRules
 2023-03-21T13:10:48-06:00 [Debug] processor: sending partial batch
@@ -125,31 +123,32 @@ After making a request, we can see the in the daemon logs something like:
 2023-03-21T13:10:49-06:00 [Debug] Send 1 telemetry record(s)
 ```
 
-It looks like it's working! Let's see the trace in the AWS web console.
+¡Parece que está funcionando! Vamos a ver qué dice la consola de AWS.
 
-In your AWS web console, go to CloudWatch and in the side panel, look for X-Ray and click on the "traces" option.
+En tu consola web de AWS, ve a CloudWatch y en el panel lateral busca la opción para X-Ray, y da click en la opción "traces".
 
-If everything went well, you'll see the number of recently received traces, and the traces table will be populated with such traces.
+Si todo salió bien, deberías estar viendo el número de rastreos recibidos recientemente, y una tabla con la información de esos rastreos.
 
 ![Cloudwatch -> X-Ray -> Traces](images/cloudwatch-xray-traces.png)
 
-In the traces table, click in an entry. We'll be taken to the trace view, were we can see the traced information.
+En la tabla de registros, da click en alguno. Aparecerá la vista de rastreo/seguimiento, donde puedes ver la información registrada.
 
-![Simple trace info](images/simple-trace-info.png)
+![Información de rastreo](images/simple-trace-info.png)
 
-Here we can see the trace data. We only are creating a segment and closing it for each call, so we don't have much other data, but we can see the response status code, the time it took for the request to be served, and, of course, the trace map, which for now includes only the client and the service.
+Aquí podemos ver los datos de seguimiento. Hasta el momento sólo estamos creando un segmento y cerrándolo para cada llamada, por lo que no tenemos mucha otra información, pero podemos ver el código de estado de respuesta, el tiempo que tomó para que se atendiera la solicitud y, por supuesto, el mapa de seguimiento, que por ahora incluye sólo el cliente y el servicio.
 
-#### Creating sub segments
-So now that we have our basic instrumentation setup, what else can we trace?
+#### Creando sub segmentos
 
-As of now, we are only tracing a request and some of its metadata. But what if we want to be more granular?
+Ahora que tenemos nuestra configuración básica de instrumentación, ¿qué más podemos rastrear?
 
-Let's say we have an intensive process running as part of the request; we can add a subsegment to monitor it.
+Hasta el momento, solo estamos rastreando una solicitud y algunos de sus metadatos. Pero, ¿qué pasa si queremos ser más detallados?
 
-Somewhere in my service, the following code is executed when I call the `auth/roles` endpoint:
+Digamos que tenemos un proceso intensivo que se ejecuta como parte de la solicitud; podemos agregar un subsegmento para monitorearlo.
+
+En algún lugar de mi servicio, se ejecuta el siguiente código cuando llamo al endpoint `auth/roles`:
 
 ```go
-// inside a function
+// dentro de alguna función
 roles := make([]Role, len(rolesList))
 for i, roleItem := range rolesList {
 	role, err := u.buildRole(roleItem)
@@ -160,9 +159,10 @@ for i, roleItem := range rolesList {
 }
 ```
 
-We can wrap the `for` loop in a subsegment so we can see how much of the request time is spent in this process.
+Aquí podemos envolver el bucle `for` en un subsegmento para ver cuánto tiempo del request tarda en ejecutar éste proceso.
 
-To add a subsegment, we wrap the loop as:
+Para crear el subsegmento, envolvemos el ciclo:
+
 ```go
 err = xray.Capture(ctx, "BuildRolesDetail", func(ctx1 context.Context) error {
 	for i, roleItem := range rolesList {
@@ -179,24 +179,24 @@ err = xray.Capture(ctx, "BuildRolesDetail", func(ctx1 context.Context) error {
 })
 ```
 
-Let's run our service and call again our instrumented endpoint.
+Vamo a correr nuestro servicio y llamemos de nuevo nuestro endpoint instrumentado.
 
-This is the new trace in AWS CloudWatch -> Traces:
+Éste es el nuevo registro en AWS CloudWatch -> Traces:
 
 
-![Trace with subsegment](images/trace-with-sub-segment.png)
+![Rastreo con subsegmentos](images/trace-with-sub-segment.png)
 
-Now we see that the request took **215ms**, and of those, the `BuildRolesDetail` loop took **205ms**.
+Ahora podemos ver que la petición tomó **215ms**, y de esos, el ciclo `BuildRolesDetail` tomó **205ms**.
 
-Are you starting to think about the tracing posibilities? You should! You can use `xray.AddMetadata` to add any extra information you need. Just take into consideration that X-Ray Daemon only sends to [AWS up to 64KB of metadata per Segment](https://docs.aws.amazon.com/xray/latest/devguide/xray-api-segmentdocuments.html).
+¿Ya estás pensando en las posibilidades? ¡Deberías! puedes usar `xray.AddMetadata` para agregar cualquier dato que te sea de utilidad. Únicamente toma en cuenta que el Daemon de X-Ray sólo envía a AWS [hasta 64KB de metadata por segmento](https://docs.aws.amazon.com/xray/latest/devguide/xray-api-segmentdocuments.html).
 
-### Instrumenting AWS Clients with X-Ray
+### Instrumentando clientes de AWS con X-Ray
 
-Instrumenting AWS clients using the SDK-V1 is fairly simple, you can follow the [official guide](https://docs.aws.amazon.com/xray/latest/devguide/xray-sdk-go-awssdkclients.html).
+Instrumentar clientes de AWS usando el SDK-V1 es bastante sencillo, puedes seguir la [guía oficial](https://docs.aws.amazon.com/xray/latest/devguide/xray-sdk-go-awssdkclients.html) para hacerlo.
 
-There isn't much documentation about how to instrument AWS SDK-v2 clients, but the configuration is also simple.
+No hay mucha documentación sobre cómo instrumentar clientes de AWS usando el AWS SDK-v2, pero la configuración es bastante sencilla.
 
-Somewhere in your service code, you'll be initializing your AWS client(s). To add instrumentation to them, you just need to provide the clients with an X-Ray HTTP client and pass the request context along for every call.
+En algún lugar en el código de tu servicio, estás inicializando tu(s) cliente(s) de AWS. Para instrumentarlos, necesitas proveer a tus clientes con un cliente HTTP de X-Ray y pasar el contexto del request para cada llamada.
 
 ```go
 cfg, err := config.LoadDefaultConfig(ctx)
@@ -219,20 +219,20 @@ dynamoClient := dynamodb.NewFromConfig(cfg, func(options *dynamodb.Options) {
 })
 ```
 
-Here, I'm adding the X-Ray HTTP Client to the AWS DynamoDB Client.
+Aquí, estoy agregando el cliente HTTP de X-Ray al cliente de AWS DynamoDB.
 
-Let's call again our instrumented endpoint.
+Una vez hecho esto, llamemos de nuevo a nuestro endpoint instrumentado.
 
-![Instrumented dynamodb client](images/instrumenting-ddb-client.png)
+![Instrumentando el cliente de DynamoDB](images/instrumenting-ddb-client.png)
 
-I'm currently running DynamoDB locally, but you can already see how much time is spent per call to DynamoDB. We can also see that the Trace Map has been updated to show my local instance of DynamoDB.
+Yo estoy corriendo DynamoDB localmente, pero ya puedes ver qué tanto tiempo toma cada llamada a DynamoDB. También podemos ver que el mapa de rastreo ha sido acualizado para mostrar mi instancia local de DynamoDB.
 
 
-## Takeaways
-Instrumenting a service with X-Ray is relatively simple, but it can get complex really fast depending on the things we want to monitor. Because of this, the effort to add tracing to your service might vary based on your use case.
+## Conclusión
+Instrumentar un servicio con X-Ray es relativamente sencillo, pero puede complicarse muy rápido dependiendo de las cosas que queremos monitorear. Debido a esto, el esfuerzo para agregar trazabilidad a su servicio puede variar de caso en caso.
 
-Another thing to consider is the 64KB limit per segment. It might not be enough if you want to trace lots of subsegments or add more metadata. There are ways to circumvent this, but they are out of the scope of this post.
+Otra cosa a considerar es el límite de 64KB por segmento. Puede que no sea suficiente si desea rastrear muchos subsegmentos o agregar más metadatos. Existen formas de evitar esto, pero están fuera del alcance de esta publicación.
 
-In conclusion, implementing X-Ray in a Go microservice is a straightforward process that can greatly benefit your application's observability and troubleshooting capabilities. The integration process is relatively easy, and the X-Ray SDK provides a range of useful features that make it easy to trace requests and identify bottlenecks. However, it's important to keep in mind that X-Ray does have some drawbacks, such as the cost associated with using it and the limitations of its sampling capabilities.
+En conclusión, implementar X-Ray en un microservicio en Go es un proceso sencillo que puede beneficiar enormemente la observabilidad y las capacidades de resolución de problemas de tu aplicación. El proceso de integración es relativamente fácil, y el SDK de X-Ray proporciona una serie de características útiles que facilitan la trazabilidad de las solicitudes y la identificación de cuellos de botella. Sin embargo, es importante tener en cuenta que X-Ray tiene algunas desventajas, como el costo asociado con su uso y las limitaciones de sus capacidades de muestreo.
 
-Nonetheless, with careful consideration and proper implementation, X-Ray can be an invaluable tool for debugging and optimizing your microservices architecture. So don't hesitate to give it a try and see how it can enhance the performance and reliability of your Go microservices.
+No obstante, con una consideración cuidadosa y una implementación adecuada, X-Ray puede ser una herramienta invaluable para la depuración y optimización de tu arquitectura de microservicios. Así que no dudes en probarlo y ver cómo puede mejorar el rendimiento y la confiabilidad de tus microservicios en Go.
